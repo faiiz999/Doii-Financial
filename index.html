@@ -1001,6 +1001,11 @@ function removeSelectedYears(){
   if (selectedYearsForDelete.size === 0) return;
   if (selectedYearsForDelete.size >= yearsList.length) return; // must keep at least 1 year
   const sheetsToRemove = new Set(Array.from(selectedYearsForDelete).map(i => yearsList[i].sheet));
+  // ปีที่มากับแม่แบบเริ่มต้น (ไม่ใช่ custom) ถ้าถูกลบ ต้องจำไว้ด้วยว่าลบไปแล้ว ไม่งั้นรีเฟรช/เข้าใหม่จะโผล่กลับมาซ้ำกับปีที่เพิ่มเองทีหลัง (ชื่อปีเดียวกัน แต่คนละ sheet key)
+  Array.from(selectedYearsForDelete).forEach((i) => {
+    const y = yearsList[i];
+    if (y && !y.custom) removedDefaultSheets.add(y.sheet);
+  });
   const activeSheet = yearsList[activeYear] ? yearsList[activeYear].sheet : null;
   yearsList = yearsList.filter(y => !sheetsToRemove.has(y.sheet));
   sheetsToRemove.forEach(s => delete state[s]);
@@ -1016,13 +1021,23 @@ function removeSelectedYears(){
 }
 
 // --- ปีที่เพิ่ม/ลบเอง (custom years) ให้จำไว้ข้ามรีเฟรช + ซิงก์รายชื่อปีกับแท็บบัญชีรายรับ-รายจ่าย ---
+let removedDefaultSheets = new Set();
 async function saveYearsList(){
   if (!window.storage) return;
   const customYears = yearsList.filter(y => y.custom).map(y => ({ sheet: y.sheet, title: y.title, templateItems: y.templateItems }));
   try { await window.storage.set('budget-custom-years', JSON.stringify(customYears), false); } catch(e){}
+  try { await window.storage.set('budget-removed-default-years', JSON.stringify(Array.from(removedDefaultSheets)), false); } catch(e){}
 }
 async function loadYearsList(){
   if (!window.storage) return;
+  try {
+    const res2 = await window.storage.get('budget-removed-default-years', false);
+    if (res2 && res2.value){
+      const removedList = JSON.parse(res2.value);
+      removedList.forEach(s => removedDefaultSheets.add(s));
+      yearsList = yearsList.filter(y => y.custom || !removedDefaultSheets.has(y.sheet));
+    }
+  } catch(e){}
   try {
     const res = await window.storage.get('budget-custom-years', false);
     if (res && res.value){
