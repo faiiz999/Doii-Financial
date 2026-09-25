@@ -2407,6 +2407,54 @@ function render(){
       newCatInput.focus();
     };
 
+    // ลิงก์เล็กๆ ให้ผู้ใช้ลบชื่อหมวดหมู่ออกจากตัวเลือกได้เองด้วยมือ (เผื่อกรณีระบบลบอัตโนมัติตอนลบรายการสุดท้ายไม่ทัน sync)
+    const delCatLink = document.createElement('a');
+    delCatLink.href = 'javascript:void(0)';
+    delCatLink.textContent = 'ลบรายการออกจากตัวเลือก';
+    delCatLink.className = 'lg-addcat-link';
+    delCatLink.style.marginLeft = '14px';
+    delCatLink.style.color = 'var(--lg-red)';
+    delCatLink.onclick = ()=>{
+      row3.innerHTML = '';
+      const delSelect = document.createElement('select');
+      delSelect.className = 'lg-newcat-input';
+      (LG_CATEGORIES[lgNewType]||[]).forEach(cat=>{
+        const opt = document.createElement('option');
+        opt.value = cat; opt.textContent = cat;
+        if (cat === catSelectedValue) opt.selected = true;
+        delSelect.appendChild(opt);
+      });
+      const delRow = document.createElement('div');
+      delRow.style.cssText = 'display:flex; gap:6px; margin-top:8px; align-items:center; flex-wrap:wrap;';
+      const hint = document.createElement('span');
+      hint.textContent = 'ลบเฉพาะออกจากตัวเลือก ไม่กระทบรายการที่บันทึกไปแล้ว';
+      hint.style.cssText = 'font-size:10.5px; color:#999; flex-basis:100%;';
+      let confirmingDelete = false;
+      const delBtn = document.createElement('button');
+      delBtn.style.cssText = 'padding:4px 10px; font-size:11px; background:var(--lg-red); color:#fff; border:none; border-radius:999px; font-family:\'Sarabun\',sans-serif; font-weight:600; cursor:pointer;';
+      function refreshDelBtn(){ delBtn.textContent = confirmingDelete ? 'ยืนยันการลบ' : 'ลบรายการนี้'; }
+      refreshDelBtn();
+      delBtn.onclick = async ()=>{
+        if (!delSelect.value) return;
+        if (!confirmingDelete){ confirmingDelete = true; refreshDelBtn(); return; }
+        const name = delSelect.value;
+        const idx = LG_CATEGORIES[lgNewType].indexOf(name);
+        if (idx > -1) LG_CATEGORIES[lgNewType].splice(idx, 1);
+        if (LG_REMOVED_CATEGORIES[lgNewType] && !LG_REMOVED_CATEGORIES[lgNewType].includes(name)){
+          LG_REMOVED_CATEGORIES[lgNewType].push(name);
+        }
+        await lgSaveCategories();
+        lgRenderForm();
+      };
+      const cancelDelBtn = document.createElement('button');
+      cancelDelBtn.textContent = 'ยกเลิก';
+      cancelDelBtn.style.cssText = 'padding:4px 10px; font-size:11px; background:#eee; color:#555; border:none; border-radius:999px; font-family:\'Sarabun\',sans-serif; font-weight:600; cursor:pointer;';
+      cancelDelBtn.onclick = ()=>{ lgRenderForm(); };
+      delRow.appendChild(delSelect); delRow.appendChild(delBtn); delRow.appendChild(cancelDelBtn);
+      row3.appendChild(delRow);
+      row3.appendChild(hint);
+    };
+
     const noteInput = document.createElement('input');
     noteInput.type = 'text'; noteInput.className = 'lg-note-input'; noteInput.placeholder = 'หมายเหตุ (ถ้ามี)';
 
@@ -2455,6 +2503,7 @@ function render(){
 
     const row3 = document.createElement('div'); row3.className = 'lg-form-row'; row3.style.marginTop = '4px';
     row3.appendChild(addCatLink);
+    row3.appendChild(delCatLink);
 
     el.appendChild(row1); el.appendChild(row2); el.appendChild(row3);
   }
