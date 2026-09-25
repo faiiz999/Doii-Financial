@@ -2588,6 +2588,11 @@ function render(){
       const delBtn = document.createElement('button');
       delBtn.className = 'lg-delbtn'; delBtn.textContent = '✕'; delBtn.title = 'ลบรายการนี้';
       delBtn.onclick = async ()=>{
+        // ถามย้ำก่อนลบเสมอ กันกดพลาด — บอกรายละเอียดรายการที่จะลบไปด้วยเพื่อความชัดเจน
+        const catLabel = t.category || t.desc || 'รายการนี้';
+        const amtLabel = (t.amount || 0).toLocaleString('en-US', {maximumFractionDigits:2});
+        const confirmMsg = `ยืนยันลบรายการ "${catLabel}" จำนวน ${amtLabel} บาท วันที่ ${t.day} ${LG_MONTHS[t.month]} ใช่หรือไม่?`;
+        if (!window.confirm(confirmMsg)) return;
         const y2 = lgYears[lgActiveYear];
         lgState[y2] = lgState[y2].filter(x=>x.id!==t.id);
         await lgSave(y2);
