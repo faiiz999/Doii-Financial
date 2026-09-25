@@ -1959,6 +1959,47 @@ function render(){
     }catch(e){ /* ไม่มีค่าที่เคยบันทึกไว้ ใช้ค่าเริ่มต้นตามปกติ */ }
   }
 
+  const LG_CATEGORIES_KEY = 'ledger-categories';
+
+  // บันทึกรายชื่อหมวดหมู่ปัจจุบัน (LG_CATEGORIES) ลง storage ให้ถาวร
+  // เดิม LG_CATEGORIES เป็นแค่ค่าคงที่ในโค้ด ไม่เคยถูกบันทึก พอลบรายการสุดท้ายของหมวดใดออก
+  // หมวดนั้นก็ยังโผล่ในตัวเลือกอยู่ดี แล้วพอรีเฟรชก็ยิ่งไม่หายเพราะโค้ดตั้งค่าคืนกลับเป็นค่าเริ่มต้นเดิมทุกครั้ง
+  async function lgSaveCategories(){
+    if (!window.storage) return;
+    try{ await window.storage.set(LG_CATEGORIES_KEY, JSON.stringify(LG_CATEGORIES), false); }catch(e){}
+  }
+
+  async function lgLoadCategories(){
+    if (!window.storage) return;
+    try{
+      const res = await window.storage.get(LG_CATEGORIES_KEY, false);
+      if (!res || !res.value) return;
+      const saved = JSON.parse(res.value);
+      if (!saved || typeof saved !== 'object') return;
+      ['income','expense','savings'].forEach(kind=>{
+        if (Array.isArray(saved[kind])) LG_CATEGORIES[kind] = saved[kind];
+      });
+    }catch(e){ /* ยังไม่เคยบันทึกไว้ ใช้ค่าเริ่มต้นตามปกติ */ }
+  }
+
+  // เช็คว่าหมวดหมู่นี้ยังมีรายการอยู่ในปีไหนบ้างไหม (ไล่โหลดให้ครบทุกปีก่อนเช็ค กันเข้าใจผิดว่าหมวดไม่ถูกใช้
+  // ทั้งที่จริงมีอยู่ในปีที่ยังไม่เคยเปิดดู/โหลดเข้าหน่วยความจำ)
+  async function lgCategoryStillUsed(kind, category){
+    await Promise.all(lgYears.map(y => lgLoad(y)));
+    return lgYears.some(y => (lgState[y]||[]).some(t => t.type===kind && (t.category||t.desc)===category));
+  }
+
+  // เรียกหลังลบรายการ — ถ้ารายการที่เพิ่งลบเป็นรายการสุดท้ายของหมวดนั้น ให้เอาหมวดนั้นออกจากตัวเลือกไปด้วย และบันทึกถาวร
+  async function lgMaybeRemoveUnusedCategory(kind, category){
+    if (!category || !LG_CATEGORIES[kind]) return;
+    const stillUsed = await lgCategoryStillUsed(kind, category);
+    if (stillUsed) return;
+    const idx = LG_CATEGORIES[kind].indexOf(category);
+    if (idx === -1) return;
+    LG_CATEGORIES[kind].splice(idx, 1);
+    await lgSaveCategories();
+  }
+
   function lgFmt(v){
     if (v===null||v===undefined||isNaN(v)) return '—';
     const n = Number(v);
@@ -2610,6 +2651,8 @@ function render(){
         const y2 = lgYears[lgActiveYear];
         lgState[y2] = lgState[y2].filter(x=>x.id!==t.id);
         await lgSave(y2);
+        // ถ้ารายการที่เพิ่งลบเป็นรายการสุดท้ายของหมวดนี้ (เช็คทุกปี) ให้เอาหมวดนี้ออกจากตัวเลือกด้วย แล้วบันทึกถาวรไม่ให้กลับมาอีกตอนรีเฟรช
+        await lgMaybeRemoveUnusedCategory(t.type, t.category || t.desc);
         lgRenderAll();
       };
       tdDel.appendChild(delBtn);
@@ -2922,6 +2965,7 @@ function render(){
   (async ()=>{
     await lgLoadYearsList();
     await lgLoadLastPosition(); // ดึงปี/เดือน/วันที่ที่เลือกไว้ล่าสุด ก่อนโหลดข้อมูลปีที่จะแสดงจริง
+    await lgLoadCategories(); // ดึงรายชื่อหมวดหมู่ที่บันทึกไว้ล่าสุด (รวมหมวดที่เคยถูกลบออกไปแล้ว) ก่อน merge กับหน้างบประมาณ
     await lgLoad(lgYears[lgActiveYear]);
     applyBudgetCategories();
     lgRenderAll();
