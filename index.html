@@ -1774,8 +1774,8 @@ function render(){
 #tab-ledger .lg-typebtn button.on.income{ background:var(--lg-blue); color:#fff; }
 #tab-ledger .lg-typebtn button.on.expense{ background:var(--lg-red); color:#fff; }
 #tab-ledger .lg-typebtn button.on.savings{ background:var(--lg-green-bright); color:#fff; }
-#tab-ledger table{ width:100%; border-collapse:collapse; font-size:13px; }
-#tab-ledger .lg-table-wrap{ margin:0 14px 14px; border:1px solid #E4DCC8; border-radius:6px; overflow:hidden; background:var(--lg-card); }
+#tab-ledger table{ width:100%; min-width:560px; border-collapse:collapse; font-size:13px; }
+#tab-ledger .lg-table-wrap{ margin:0 14px 14px; border:1px solid #E4DCC8; border-radius:6px; overflow-x:auto; -webkit-overflow-scrolling:touch; background:var(--lg-card); }
 #tab-ledger thead th{ background:var(--lg-green-deep); color:var(--lg-paper); font-weight:600; padding:8px; text-align:left; font-size:12px; }
 #tab-ledger thead th.num{ text-align:right; }
 #tab-ledger .lg-filter-row th{ background:#EFE9D8; padding:5px 6px; }
@@ -2534,9 +2534,14 @@ function render(){
       const tdCat = document.createElement('td');
       const catSel = document.createElement('select');
       catSel.className = 'lg-edit-cat';
-      (LG_CATEGORIES[t.type] || []).forEach(cat=>{
+      const currentCat = t.category || t.desc;
+      const catOptionsForRow = (LG_CATEGORIES[t.type] || []).slice();
+      // กันไว้อีกชั้น: ถ้าหมวดเดิมของรายการนี้ไม่อยู่ในลิสต์ปัจจุบันแล้วไม่ว่าด้วยเหตุผลอะไร
+      // ให้เติมหมวดเดิมเข้าไปเป็นตัวเลือกด้วย จะได้ไม่โชว์หมวดอื่นแทนแบบผิดๆ (ข้อมูลจริงยังถูกต้องเสมอ)
+      if (currentCat && !catOptionsForRow.includes(currentCat)) catOptionsForRow.unshift(currentCat);
+      catOptionsForRow.forEach(cat=>{
         const opt = document.createElement('option'); opt.value = cat; opt.textContent = cat;
-        if (cat === (t.category || t.desc)) opt.selected = true;
+        if (cat === currentCat) opt.selected = true;
         catSel.appendChild(opt);
       });
       catSel.addEventListener('change', ()=>{ t.category = catSel.value; commitEdit(t); });
@@ -2875,12 +2880,20 @@ function render(){
     lgSaveLastPosition(); // จำปี/เดือน/วันที่ล่าสุดไว้เสมอ ทุกครั้งที่มีการ render ใหม่จากการเปลี่ยนปี/เดือน/ข้อมูล
   }
 
+  // รวมรายการหมวดหมู่จากหน้างบประมาณเข้ากับของเดิมในบัญชีฯ (ไม่ใช่แทนที่ทั้งหมด)
+  // เดิมโค้ดนี้ "แทนที่" LG_CATEGORIES ทั้งชุดด้วยรายการจากหน้างบประมาณ ทำให้หมวดที่มีอยู่แต่ไม่ได้อยู่ในหน้างบประมาณ
+  // (เช่นหมวดเริ่มต้นของบัญชีฯ เองอย่าง "รายจ่ายอื่นๆ" ที่ไม่เคยเป็นแถวในหน้างบประมาณ) หายไปจาก dropdown ทันที
+  // พอรายการเดิมที่เคยเลือกหมวดนั้นไว้ถูกเปิดดูใหม่ dropdown เลยไม่มีตัวเลือกนั้นให้เลือก และโชว์หมวดแรกในลิสต์แทนแบบผิดๆ
   function applyBudgetCategories(){
     const cats = window.__budgetCategories;
     if (!cats) return;
-    if (cats.income && cats.income.length) LG_CATEGORIES.income = cats.income;
-    if (cats.expense && cats.expense.length) LG_CATEGORIES.expense = cats.expense;
-    if (cats.savings && cats.savings.length) LG_CATEGORIES.savings = cats.savings;
+    ['income','expense','savings'].forEach(kind=>{
+      const incoming = cats[kind];
+      if (!incoming || !incoming.length) return;
+      const merged = LG_CATEGORIES[kind].slice();
+      incoming.forEach(name=>{ if (!merged.includes(name)) merged.push(name); });
+      LG_CATEGORIES[kind] = merged;
+    });
   }
   window.addEventListener('budget-categories-updated', ()=>{
     applyBudgetCategories();
@@ -3738,8 +3751,10 @@ function LedgerTable({ columns, rows, highlights, exportFilename }) {
   const colWidthPct = (100 / columns.length).toFixed(2) + "%";
   return (
     <div>
+      {/* มือถือแนวตั้งจอแคบกว่าตารางนี้ต้องการ — ถ้าไม่กำหนด minWidth ตัว tableLayout:fixed จะบีบทุกคอลัมน์ให้เล็กจนอ่านไม่ออก
+          จึงบังคับความกว้างขั้นต่ำตามจำนวนคอลัมน์ไว้ แล้วให้ div ห่อ (overflow-auto) เลื่อนซ้าย-ขวาแทนการบีบ */}
       <div className="rounded-lg overflow-auto" style={{ maxHeight: "320px", border: `1px solid ${GOLD_SOFT}`, background: "#FFFDF6" }}>
-        <table ref={tableRef} className="w-full" style={{ borderCollapse: "collapse", tableLayout: "fixed", fontFamily: "'IBM Plex Mono', monospace", fontSize: "13px" }}>
+        <table ref={tableRef} className="w-full" style={{ borderCollapse: "collapse", tableLayout: "fixed", fontFamily: "'IBM Plex Mono', monospace", fontSize: "13px", minWidth: Math.max(480, columns.length * 72) + "px" }}>
         <thead>
           <tr>
             {columns.map((c) => (
