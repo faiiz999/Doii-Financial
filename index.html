@@ -704,15 +704,30 @@ function syncYearFromLedger(yi){
     const itemType = kind + '_item';
     const totalType = kind + '_total';
     const negate = (kind === 'expense');
+    const monthValues = yearData[key];
+    // ledger ส่งมาทุกหมวดหมู่ที่รู้จักเสมอ (ใส่ 0 ไว้ให้แม้ไม่เคยมีการใช้จริง) เพื่อให้เคลียร์ค่าเก่าได้ตอนลบรายการ
+    // แต่ถ้าเอามาสร้างแถวใหม่ในตารางงบประมาณทุกครั้งที่เจอ จะกลายเป็นสร้างแถวเปล่าให้หมวด default ที่ไม่เคยถูกใช้เลย
+    const hasAnyData = monthValues.some(v => (v||0) !== 0);
     let item = items.find(it => it.type===itemType && it.name===cat);
     if (!item){
+      if (!hasAnyData) return; // หมวดนี้ไม่เคยมีข้อมูลจริงในบัญชีฯ เลย ไม่ต้องสร้างแถวเปล่าในตารางงบประมาณให้
       item = { type: itemType, name: cat, excluded:false, b: Array(12).fill(null), a: Array(12).fill(null) };
       let insertAt = items.findIndex(it => it.type===totalType);
       if (insertAt === -1) insertAt = items.length;
       items.splice(insertAt, 0, item);
+    } else if (!hasAnyData){
+      // มีแถวนี้อยู่แล้วแต่ตอนนี้ไม่มีข้อมูลจริงเหลือเลย (เช่นเพิ่งลบรายการสุดท้ายในบัญชีฯ ไป)
+      // ถ้าแถวนี้ไม่เคยมีใครกรอก Budget (b) ไว้เลยด้วย แสดงว่าเป็นแถวที่เกิดจากการ sync อัตโนมัติล้วนๆ ไม่ใช่ของที่ผู้ใช้ตั้งใจสร้าง — ลบทิ้งไปเลย
+      // แต่ถ้ามีการตั้ง Budget ไว้ (ผู้ใช้ตั้งใจสร้างแถวนี้เอง) จะไม่ลบ แค่ล้างค่า Actual ให้เป็นค่าว่างตามปกติ
+      const hasBudgetValues = item.b.some(v => v !== null && v !== undefined);
+      if (!hasBudgetValues){
+        const idx = items.indexOf(item);
+        if (idx > -1){ items.splice(idx, 1); changed = true; }
+        return;
+      }
     }
     for (let mnum=0; mnum<12; mnum++){
-      const v = yearData[key][mnum] || 0;
+      const v = monthValues[mnum] || 0;
       item.a[mnum] = v === 0 ? null : (negate ? -Math.abs(v) : v);
     }
     changed = true;
@@ -6303,24 +6318,4 @@ function comboShowTab(which){
   #tab-budget table, #tab-ledger table { border-radius:12px; }
   #tab-budget input, #tab-budget select, #tab-ledger input, #tab-ledger select { border-radius:8px !important; }
   #tab-budget button.addbtn { border-radius:8px !important; }
-  #tab-budget .masthead, #tab-ledger .lg-masthead { border-radius:16px !important; }
-  #tab-budget .year-pill, #tab-budget .month-chip, #tab-ledger .lg-pill,
-  #tab-budget .lg-date-group, #tab-ledger .lg-date-group { border-radius:10px !important; }
-  #tab-budget .month-chip { padding:7px 13px !important; font-size:14px !important; box-sizing:border-box !important; }
-  #tab-budget .lg-cat-btn, #tab-ledger .lg-cat-btn, #tab-budget .lg-cat-listbox, #tab-ledger .lg-cat-listbox { border-radius:10px !important; }
-</style>
-
-<style id="navbar-tone-headings">
-  /* ให้หัวข้อหลัก (แถบชื่อหน้า) และป้ายเลขหัวข้อ (1./2./3.) ใช้สีเดียวกับแถบเมนูบนสุด (ดำเขียว + ทอง) — สีเท่านั้น ไม่แตะ position/layout */
-  #tab-budget .masthead, #tab-ledger .lg-masthead { background:#122421 !important; border-bottom-color:#C9971F !important; }
-  #tab-budget .section-label, #tab-ledger .lg-section-label { background:#122421 !important; color:#E7D9AE !important; }
-  /* ตัวหนังสือหัวข้อหลักใหญ่ (ชื่อหน้า) เท่านั้น ให้เป็นสีเหลืองอ่อน — รายละเอียดเล็กๆ อื่นคงสีเดิม */
-  #tab-budget .masthead h1, #tab-ledger .lg-masthead h1 { color:#E7D9AE !important; }
-  /* ป้ายหัวข้อย่อย 1./2./3. ขอบมนขึ้น ไม่เหลี่ยม + ขนาดตัวหนังสือให้เท่ากันทุกหน้า (รวมหน้าแผนเกษียณด้วย) */
-  #tab-budget .section-label, #tab-ledger .lg-section-label { border-radius:10px !important; font-size:14px !important; padding:7px 12px !important; line-height:1.3 !important; box-sizing:border-box !important; border:1px solid transparent !important; }
-  #tab-retire-wrap .app-section-label { border-radius:10px !important; }
-  #tab-retire-wrap .app-section-label span:last-child { font-size:13.5px !important; }
-</style>
-
-</body>
-</html>
+  #tab-budget .masthead, #tab-ledger .lg-masthead
