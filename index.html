@@ -2844,27 +2844,45 @@ function render(){
         : '<p class="lg-chart-empty">ยังไม่มีข้อมูลในช่วงที่เลือก</p>';
       return;
     }
-    const incPct = inc/total*100, savPct = sav/total*100, expPct = exp/total*100;
+    // ตั้งรายได้เป็นฐาน 100% เสมอ แล้วคิดเงินออม/ค่าใช้จ่ายเป็น % เทียบกับรายได้ (ไม่ใช่ % ของผลรวมทั้งหมดเหมือนเดิม)
+    const hasIncome = inc > 0;
+    const incPct = 100;
+    const savPct = hasIncome ? (sav/inc*100) : null;
+    const expPct = hasIncome ? (exp/inc*100) : null;
     function seg(pct, offsetSoFar, color){
       if (pct <= 0) return '';
       const dash = `${pct} ${100-pct}`;
       const dashOffset = 25 - offsetSoFar;
       return `<circle cx="18" cy="18" r="15.915" fill="transparent" stroke="${color}" stroke-width="4" stroke-dasharray="${dash}" stroke-dashoffset="${dashOffset}"></circle>`;
     }
-    const svg = `
-      <svg viewBox="0 0 36 36" class="lg-pie-svg">
-        <circle cx="18" cy="18" r="15.915" fill="transparent" stroke="#F0E9D8" stroke-width="4"></circle>
-        ${seg(incPct, 0, '#1544CC')}
-        ${seg(savPct, incPct, '#189950')}
-        ${seg(expPct, incPct+savPct, '#B23B2E')}
-      </svg>`;
+    let svg;
+    if (hasIncome){
+      // วงพื้นเป็นสีน้ำเงินเต็มวง (แทนรายได้ = 100%) แล้วเอาสัดส่วนเงินออม/ค่าใช้จ่าย (เทียบกับรายได้) มา "แทะ" ทับบนวงเดียวกัน
+      // ถ้าออมรวมกับจ่ายเกินรายได้ วงจะเต็มพอดีที่ 100% ส่วนตัวเลขจริงใน legend ยังโชว์เกิน 100% ให้เห็นตามจริงว่าใช้เกินรายได้
+      const savArc = Math.min(100, savPct);
+      const expArc = Math.min(100 - savArc, Math.max(0, expPct));
+      svg = `
+        <svg viewBox="0 0 36 36" class="lg-pie-svg">
+          <circle cx="18" cy="18" r="15.915" fill="transparent" stroke="#1544CC" stroke-width="4"></circle>
+          ${seg(savArc, 0, '#189950')}
+          ${seg(expArc, savArc, '#B23B2E')}
+        </svg>`;
+    } else {
+      // ไม่มีรายได้ในช่วงที่เลือก — คิด % เทียบรายได้ไม่ได้ แสดงวงเปล่าไว้เฉยๆ
+      svg = `
+        <svg viewBox="0 0 36 36" class="lg-pie-svg">
+          <circle cx="18" cy="18" r="15.915" fill="transparent" stroke="#F0E9D8" stroke-width="4"></circle>
+        </svg>`;
+    }
+    const savPctText = savPct===null ? '—' : `${savPct.toFixed(1)}% ของรายได้`;
+    const expPctText = expPct===null ? '—' : `${expPct.toFixed(1)}% ของรายได้`;
     const wrap = document.createElement('div'); wrap.className = 'lg-pie-wrap';
     wrap.innerHTML = `
       <div class="lg-pie">${svg}</div>
       <div class="lg-pie-legend">
         <div class="lg-pie-row"><i style="background:var(--lg-blue);"></i><span>รายได้</span><b>${lgFmt(inc)} บาท (${incPct.toFixed(1)}%)</b></div>
-        <div class="lg-pie-row"><i style="background:var(--lg-green-bright);"></i><span>เงินออม</span><b>${lgFmt(sav)} บาท (${savPct.toFixed(1)}%)</b></div>
-        <div class="lg-pie-row"><i style="background:var(--lg-red);"></i><span>ค่าใช้จ่าย</span><b>${lgFmt(exp)} บาท (${expPct.toFixed(1)}%)</b></div>
+        <div class="lg-pie-row"><i style="background:var(--lg-green-bright);"></i><span>เงินออม</span><b>${lgFmt(sav)} บาท (${savPctText})</b></div>
+        <div class="lg-pie-row"><i style="background:var(--lg-red);"></i><span>ค่าใช้จ่าย</span><b>${lgFmt(exp)} บาท (${expPctText})</b></div>
       </div>
     `;
     el.appendChild(wrap);
