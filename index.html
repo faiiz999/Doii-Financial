@@ -1808,6 +1808,11 @@ function render(){
 #tab-ledger .lg-delbtn.confirm{ background:var(--lg-red); color:#fff; font-size:11.5px; font-weight:700; white-space:nowrap; padding:5px 8px; }
 #tab-ledger .lg-delbtn.confirm:hover{ background:#B23B2E; color:#fff; }
 #tab-ledger .lg-empty{ padding:18px; text-align:center; color:var(--lg-ink-soft); font-size:13px; }
+#tab-ledger tfoot .lg-total-row td{ padding:10px 8px; border-top:2px solid var(--lg-line, #E6DFC8); font-weight:700; font-size:13px; background:#FAF6E8; }
+#tab-ledger tfoot .lg-total-label{ text-align:right; color:var(--lg-ink-soft); }
+#tab-ledger tfoot .lg-total-amt{ text-align:right; font-variant-numeric:tabular-nums; font-size:14.5px; }
+#tab-ledger tfoot .lg-total-amt.pos{ color:var(--lg-green-bright); }
+#tab-ledger tfoot .lg-total-amt.neg{ color:var(--lg-red); }
 #tab-ledger .lg-badge{ display:inline-block; font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:999px; }
 #tab-ledger .lg-badge.income{ background:#DDE7FB; color:var(--lg-blue); }
 #tab-ledger .lg-badge.expense{ background:#FBEAE7; color:#8F281D; }
@@ -1855,6 +1860,7 @@ function render(){
     <tr class="lg-filter-row" id="lgFilterRow"></tr>
     </thead>
     <tbody id="lgTbody"></tbody>
+    <tfoot id="lgTfoot"></tfoot>
   </table>
 </div>
 <div style="margin:2px 14px 14px; text-align:left;">
@@ -2611,11 +2617,41 @@ function render(){
     }
   }
 
+  // คำนวณ/แสดงแถวยอดรวม Total ท้ายตาราง — รวมเฉพาะรายการที่ผ่าน filter ปัจจุบัน (ไม่ใช่ทั้งเดือน)
+  // กติกาสี: ปกติยอดบวก (รายได้มากกว่ารายจ่าย+เงินออม) เขียว, ยอดลบแดง
+  // แต่ถ้า filter ประเภทไว้แค่ "เงินออม" อย่างเดียว ให้เขียวเสมอ, ถ้า filter แค่ "รายจ่าย" อย่างเดียว ให้แดงเสมอ
+  function lgRenderFooterTotal(tx){
+    const tfoot = document.getElementById('lgTfoot');
+    if (!tfoot) return;
+    tfoot.innerHTML = '';
+    if (!tx.length) return;
+    let sum = 0;
+    tx.forEach(t=>{
+      if (t.type === 'income') sum += t.amount||0;
+      else sum -= t.amount||0;
+    });
+    let isPos;
+    if (lgFilterType === 'savings') isPos = true;
+    else if (lgFilterType === 'expense') isPos = false;
+    else isPos = sum >= 0;
+    const sign = sum < 0 ? '-' : '+';
+    const amtText = sign + lgFmt(Math.abs(sum));
+    const tr = document.createElement('tr');
+    tr.className = 'lg-total-row';
+    tr.innerHTML = `
+      <td colspan="4" class="lg-total-label">${lgFilterActive() ? 'ยอดรวม (ตามตัวกรอง)' : 'ยอดรวมทั้งหมด'}</td>
+      <td class="lg-total-amt ${isPos ? 'pos' : 'neg'}">${amtText}</td>
+      <td></td>
+    `;
+    tfoot.appendChild(tr);
+  }
+
   function lgRenderTable(){
     const y = lgYears[lgActiveYear];
     const tbody = document.getElementById('lgTbody');
     const tx = lgSortTx(lgApplyFilters(lgMonthsTx(y, lgActiveMonths).slice()));
     tbody.innerHTML = '';
+    lgRenderFooterTotal(tx);
     if (!tx.length){
       const tr = document.createElement('tr');
       const msg = lgActiveMonths.size === 0
