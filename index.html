@@ -1894,6 +1894,9 @@ function render(){
     expense: ['ค่าเลี้ยงดูบุพการี/ญาติ','ค่าอาหาร','ค่าที่พัก','ค่าเดินทาง','ค่าโทรศัพท์','ค่า Shopping online','เงินบริจาค','ค่าประกัน','รายจ่ายอื่นๆ'],
     savings: ['เงินออม/ลงทุน','กองทุนสำรองเลี้ยงชีพ']
   };
+  // รายชื่อหมวดหมู่ที่ผู้ใช้ "ลบ" ไปแล้ว (ไม่มีรายการเหลือ) — กันไม่ให้ applyBudgetCategories() ดึงชื่อนี้
+  // กลับมาจากหน้างบประมาณอีก แม้ว่าหน้างบประมาณจะยังไม่ทันเคลียร์แถวเปล่าที่เกิดจาก sync อัตโนมัติ
+  const LG_REMOVED_CATEGORIES = { income: [], expense: [], savings: [] };
   let lgYears = [2026,2027,2028,2029,2030];
   let lgActiveYear = 0;
   let lgActiveMonths = new Set([0]); // เดือนที่กำลังดูอยู่ — เริ่มต้นที่มกราคม เลือกได้หลายเดือน (จะถูกแทนที่ด้วยค่าที่เลือกไว้ล่าสุดตอนโหลดหน้า ถ้ามี)
@@ -1981,7 +1984,9 @@ function render(){
   // หมวดนั้นก็ยังโผล่ในตัวเลือกอยู่ดี แล้วพอรีเฟรชก็ยิ่งไม่หายเพราะโค้ดตั้งค่าคืนกลับเป็นค่าเริ่มต้นเดิมทุกครั้ง
   async function lgSaveCategories(){
     if (!window.storage) return;
-    try{ await window.storage.set(LG_CATEGORIES_KEY, JSON.stringify(LG_CATEGORIES), false); }catch(e){}
+    try{
+      await window.storage.set(LG_CATEGORIES_KEY, JSON.stringify({ categories: LG_CATEGORIES, removed: LG_REMOVED_CATEGORIES }), false);
+    }catch(e){}
   }
 
   async function lgLoadCategories(){
@@ -1991,8 +1996,12 @@ function render(){
       if (!res || !res.value) return;
       const saved = JSON.parse(res.value);
       if (!saved || typeof saved !== 'object') return;
+      // รองรับทั้งรูปแบบเก่า (บันทึกแค่ {income,expense,savings} ตรงๆ) และรูปแบบใหม่ ({categories, removed})
+      const savedCats = (saved.categories && typeof saved.categories === 'object') ? saved.categories : saved;
+      const savedRemoved = (saved.removed && typeof saved.removed === 'object') ? saved.removed : null;
       ['income','expense','savings'].forEach(kind=>{
-        if (Array.isArray(saved[kind])) LG_CATEGORIES[kind] = saved[kind];
+        if (Array.isArray(savedCats[kind])) LG_CATEGORIES[kind] = savedCats[kind];
+        if (savedRemoved && Array.isArray(savedRemoved[kind])) LG_REMOVED_CATEGORIES[kind] = savedRemoved[kind];
       });
     }catch(e){ /* ยังไม่เคยบันทึกไว้ ใช้ค่าเริ่มต้นตามปกติ */ }
   }
@@ -2005,13 +2014,16 @@ function render(){
   }
 
   // เรียกหลังลบรายการ — ถ้ารายการที่เพิ่งลบเป็นรายการสุดท้ายของหมวดนั้น ให้เอาหมวดนั้นออกจากตัวเลือกไปด้วย และบันทึกถาวร
+  // พร้อมจดชื่อไว้ในรายการ "ถูกลบแล้ว" กันไม่ให้หน้างบประมาณ sync ชื่อนี้กลับมาอีก (เผื่อฝั่งงบประมาณยังเคลียร์แถวเปล่าไม่ทัน)
   async function lgMaybeRemoveUnusedCategory(kind, category){
     if (!category || !LG_CATEGORIES[kind]) return;
     const stillUsed = await lgCategoryStillUsed(kind, category);
     if (stillUsed) return;
     const idx = LG_CATEGORIES[kind].indexOf(category);
-    if (idx === -1) return;
-    LG_CATEGORIES[kind].splice(idx, 1);
+    if (idx > -1) LG_CATEGORIES[kind].splice(idx, 1);
+    if (LG_REMOVED_CATEGORIES[kind] && !LG_REMOVED_CATEGORIES[kind].includes(category)){
+      LG_REMOVED_CATEGORIES[kind].push(category);
+    }
     await lgSaveCategories();
   }
 
@@ -2379,6 +2391,10 @@ function render(){
         const name = newCatInput.value.trim();
         if (!name) return;
         if (!LG_CATEGORIES[lgNewType].includes(name)) LG_CATEGORIES[lgNewType].push(name);
+        // ผู้ใช้ตั้งใจเพิ่ม/นำกลับมาใช้หมวดนี้เอง — เอาออกจากรายการ "ถูกลบแล้ว" ถ้ามีชื่อซ้ำ
+        const removedIdx = (LG_REMOVED_CATEGORIES[lgNewType] || []).indexOf(name);
+        if (removedIdx > -1) LG_REMOVED_CATEGORIES[lgNewType].splice(removedIdx, 1);
+        lgSaveCategories();
         lgPendingCatSelect = name;
         window.__ledgerNewCategory = { kind: lgNewType, name: name };
         window.dispatchEvent(new Event('ledger-new-category'));
@@ -2967,8 +2983,14 @@ function render(){
     ['income','expense','savings'].forEach(kind=>{
       const incoming = cats[kind];
       if (!incoming || !incoming.length) return;
+      const removedSet = LG_REMOVED_CATEGORIES[kind] || [];
       const merged = LG_CATEGORIES[kind].slice();
-      incoming.forEach(name=>{ if (!merged.includes(name)) merged.push(name); });
+      incoming.forEach(name=>{
+        // ข้ามชื่อที่ผู้ใช้เพิ่งลบไปจากบัญชีฯ — กันหน้างบประมาณ sync ชื่อนี้กลับมาอีก
+        // (เช่น ยังมีแถวเปล่าที่เกิดจาก sync อัตโนมัติค้างอยู่ฝั่งงบประมาณ ยังไม่ทันถูกเคลียร์)
+        if (removedSet.includes(name)) return;
+        if (!merged.includes(name)) merged.push(name);
+      });
       LG_CATEGORIES[kind] = merged;
     });
   }
@@ -6318,4 +6340,24 @@ function comboShowTab(which){
   #tab-budget table, #tab-ledger table { border-radius:12px; }
   #tab-budget input, #tab-budget select, #tab-ledger input, #tab-ledger select { border-radius:8px !important; }
   #tab-budget button.addbtn { border-radius:8px !important; }
-  #tab-budget .masthead, #tab-ledger .lg-masthead
+  #tab-budget .masthead, #tab-ledger .lg-masthead { border-radius:16px !important; }
+  #tab-budget .year-pill, #tab-budget .month-chip, #tab-ledger .lg-pill,
+  #tab-budget .lg-date-group, #tab-ledger .lg-date-group { border-radius:10px !important; }
+  #tab-budget .month-chip { padding:7px 13px !important; font-size:14px !important; box-sizing:border-box !important; }
+  #tab-budget .lg-cat-btn, #tab-ledger .lg-cat-btn, #tab-budget .lg-cat-listbox, #tab-ledger .lg-cat-listbox { border-radius:10px !important; }
+</style>
+
+<style id="navbar-tone-headings">
+  /* ให้หัวข้อหลัก (แถบชื่อหน้า) และป้ายเลขหัวข้อ (1./2./3.) ใช้สีเดียวกับแถบเมนูบนสุด (ดำเขียว + ทอง) — สีเท่านั้น ไม่แตะ position/layout */
+  #tab-budget .masthead, #tab-ledger .lg-masthead { background:#122421 !important; border-bottom-color:#C9971F !important; }
+  #tab-budget .section-label, #tab-ledger .lg-section-label { background:#122421 !important; color:#E7D9AE !important; }
+  /* ตัวหนังสือหัวข้อหลักใหญ่ (ชื่อหน้า) เท่านั้น ให้เป็นสีเหลืองอ่อน — รายละเอียดเล็กๆ อื่นคงสีเดิม */
+  #tab-budget .masthead h1, #tab-ledger .lg-masthead h1 { color:#E7D9AE !important; }
+  /* ป้ายหัวข้อย่อย 1./2./3. ขอบมนขึ้น ไม่เหลี่ยม + ขนาดตัวหนังสือให้เท่ากันทุกหน้า (รวมหน้าแผนเกษียณด้วย) */
+  #tab-budget .section-label, #tab-ledger .lg-section-label { border-radius:10px !important; font-size:14px !important; padding:7px 12px !important; line-height:1.3 !important; box-sizing:border-box !important; border:1px solid transparent !important; }
+  #tab-retire-wrap .app-section-label { border-radius:10px !important; }
+  #tab-retire-wrap .app-section-label span:last-child { font-size:13.5px !important; }
+</style>
+
+</body>
+</html>
