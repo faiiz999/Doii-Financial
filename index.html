@@ -130,6 +130,18 @@
   .md\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
+/* ===== ปรับให้อ่านง่ายขึ้นเฉพาะตอนถือจอ "แนวตั้ง" (portrait) เท่านั้น =====
+   ใช้ orientation แทน min-width เพื่อไม่ให้กระทบกับแนวนอนเลย
+   (แท็บเล็ตจอกว้างที่ยังกว้างกว่า 640px ตอนตั้งจอ จะได้ไม่ยังคับแคบเหมือนเดิม) */
+@media (orientation: portrait) {
+  /* การ์ดสรุปยอดหน้า "งบประมาณรายเดือน" ให้เรียงเป็นคอลัมน์เดียว อ่านง่ายขึ้น */
+  #tab-budget .summary-strip { grid-template-columns: 1fr !important; }
+  /* การ์ดสรุปยอดหน้า "บัญชีรายรับ-รายจ่าย" ให้เรียงเป็นคอลัมน์เดียว */
+  #tab-ledger .lg-summary { grid-template-columns: 1fr !important; }
+  /* การ์ดสรุปตัวเลขหน้า "แผนเกษียณ" (StatCard) ให้เรียงเป็นคอลัมน์เดียว */
+  .sm\:grid-cols-2, .sm\:grid-cols-3 { grid-template-columns: repeat(1, minmax(0, 1fr)) !important; }
+}
+
 button { font: inherit; }
 
 </style>
@@ -629,6 +641,9 @@ async function loadYear(yi){
   } else { storageOK = false; }
   items = (items || defaultItems(yi)).filter(it => it.type !== 'label');
   state[sk(yi)] = { items };
+  // ปีที่เพิ่งโหลดอาจมีข้อมูลจากบัญชีรายรับ-รายจ่ายที่เปลี่ยนไปแล้วตั้งแต่ก่อนโหลด (เช่นเคยแก้ไว้ตอนที่ปีนี้ยังไม่ถูกเปิดดู)
+  // จึงต้องซิงค์ค่า Actual ให้ตรงกับบัญชีฯ ล่าสุดทันทีที่โหลดเสร็จ ไม่ต้องรอ event ครั้งถัดไป
+  syncYearFromLedger(yi);
 }
 async function saveYear(yi){
   if (!window.storage) return;
@@ -636,17 +651,24 @@ async function saveYear(yi){
   catch(e){ storageOK = false; }
 }
 
-function syncFromLedger(){
-  const totals = window.__ledgerCatTotals;
-  if (!totals) return;
-  const meta = yearsList[activeYear];
-  if (!meta) return;
+function getCalYear(yi){
+  const meta = yearsList[yi];
+  if (!meta) return null;
   const m = meta.title.match(/\((\d{4})\)/);
-  if (!m) return;
-  const yearData = totals[parseInt(m[1],10)];
-  if (!yearData) return;
-  if (!state[sk(activeYear)]) return;
-  const items = state[sk(activeYear)].items;
+  return m ? parseInt(m[1],10) : null;
+}
+
+// ซิงค์ค่า Actual ของปี yi ให้ตรงกับผลรวมล่าสุดจากบัญชีรายรับ-รายจ่าย
+// (ใช้ทั้งตอนได้รับ event 'ledger-updated' และตอนเพิ่งโหลดปีนั้นเข้ามาใหม่)
+function syncYearFromLedger(yi){
+  const totals = window.__ledgerCatTotals;
+  if (!totals) return false;
+  const calYear = getCalYear(yi);
+  if (calYear === null) return false;
+  const yearData = totals[calYear];
+  if (!yearData) return false;
+  if (!state[sk(yi)]) return false; // ปีนี้ยังไม่เคยโหลด รอให้โหลดก่อนแล้วค่อยซิงค์ตอนโหลดเสร็จ
+  const items = state[sk(yi)].items;
   let changed = false;
   Object.keys(yearData).forEach(key=>{
     const sep = key.indexOf('|');
@@ -668,7 +690,20 @@ function syncFromLedger(){
     }
     changed = true;
   });
-  if (changed){ saveYear(activeYear); render(); }
+  if (changed) saveYear(yi);
+  return changed;
+}
+
+// ไล่ซิงค์ "ทุกปีที่เคยโหลดไว้ในเซสชันนี้" ไม่ใช่แค่ปีที่กำลังเปิดดูอยู่
+// (เดิมซิงค์แค่ activeYear เลยทำให้แก้บัญชีฯ ของปีอื่นแล้วตารางปีนั้นไม่อัปเดตจนกว่าจะสลับมาดูแล้วมีการแก้ไขซ้ำ)
+function syncFromLedger(){
+  if (!window.__ledgerCatTotals) return;
+  let activeChanged = false;
+  yearsList.forEach((meta, yi)=>{
+    if (!state[sk(yi)]) return;
+    if (syncYearFromLedger(yi) && yi === activeYear) activeChanged = true;
+  });
+  if (activeChanged) render();
 }
 window.addEventListener('ledger-updated', syncFromLedger);
 
@@ -1415,6 +1450,8 @@ function render(){
   const items = state[sk(activeYear)].items;
   const body = document.getElementById('bodyRows');
   body.innerHTML = '';
+  const calYear = getCalYear(activeYear);
+  const ledgerCounts = (calYear !== null && window.__ledgerCatCounts) ? window.__ledgerCatCounts[calYear] : null;
 
   let incomeTotalB=Array(12).fill(0), incomeTotalA=Array(12).fill(0);
   let savingsTotalB=Array(12).fill(0), savingsTotalA=Array(12).fill(0);
@@ -1515,7 +1552,25 @@ function render(){
 
       const tdA = document.createElement('td');
       if (isTotal){ tdA.innerHTML = `<span style="padding:6px 8px;display:inline-block;${styleA}">${fmtDisplay(aVal)}</span>`; }
-      else { tdA.appendChild(makeNumInput('actual', aVal, (v)=>{ item.a[m]= (item.type==='expense_item' && v!==null) ? -Math.abs(v) : v; saveYear(activeYear); render(); })); }
+      else {
+        // หมวดนี้ในเดือนนี้มีกี่รายการย่อยในบัญชีรายรับ-รายจ่าย — ใช้ตัดสินว่าจะแก้ในตารางแล้วซิงค์ย้อนกลับได้ไหม
+        const entryCount = (ledgerCounts && ledgerCounts[sec + '|' + item.name]) ? ledgerCounts[sec + '|' + item.name][m] : 0;
+        if (entryCount >= 2){
+          // มีหลายรายการย่อยในเดือนนี้ — ไม่รู้ว่าจะแก้รายการไหน จึงล็อกไว้ ให้ไปแก้ที่หน้ารายรับ-รายจ่ายแทน
+          tdA.innerHTML = `<span class="cellnum actual" style="padding:6px 8px;display:inline-block;color:#1E2E22;cursor:help;" title="หมวดนี้มีรายการย่อยในเดือนนี้ ${entryCount} รายการในบัญชีรายรับ-รายจ่าย — แก้ไขได้ที่หน้ารายรับ-รายจ่ายเท่านั้น">${fmtDisplay(aVal)} 🔒</span>`;
+        } else {
+          tdA.appendChild(makeNumInput('actual', aVal, (v)=>{
+            item.a[m]= (item.type==='expense_item' && v!==null) ? -Math.abs(v) : v;
+            saveYear(activeYear);
+            // ซิงค์ย้อนกลับไปหน้ารายรับ-รายจ่าย เฉพาะกรณีที่ไม่มีรายการย่อยเลย (สร้างใหม่ให้) หรือมีรายการเดียว (แก้ตัวนั้นให้ตรง) — ไม่กำกวม
+            if (calYear !== null){
+              window.__budgetActualEdit = { year: calYear, kind: sec, category: item.name, month: m, value: (v===null||v===undefined) ? 0 : Math.abs(v) };
+              window.dispatchEvent(new Event('budget-actual-edit'));
+            }
+            render();
+          }));
+        }
+      }
 
       const tdD = document.createElement('td');
       tdD.className = 'diffcell ' + diffClass(diff);
@@ -1694,6 +1749,10 @@ function render(){
 #tab-ledger .lg-table-wrap{ margin:0 14px 14px; border:1px solid #E4DCC8; border-radius:6px; overflow:hidden; background:var(--lg-card); }
 #tab-ledger thead th{ background:var(--lg-green-deep); color:var(--lg-paper); font-weight:600; padding:8px; text-align:left; font-size:12px; }
 #tab-ledger thead th.num{ text-align:right; }
+#tab-ledger .lg-filter-row th{ background:#EFE9D8; padding:5px 6px; }
+#tab-ledger .lg-filter-select{ width:100%; font-size:11.5px; padding:3px 4px; border:1px solid #D8CFB4; border-radius:4px; background:#fff; color:var(--lg-ink); }
+#tab-ledger .lg-filter-select:focus{ outline:2px solid var(--lg-green-bright); outline-offset:-1px; }
+#tab-ledger .lg-filter-clear{ font-size:11px; color:var(--lg-ink-soft); text-decoration:underline; cursor:pointer; background:none; border:none; padding:0; white-space:nowrap; }
 #tab-ledger tbody td{ padding:8px; border-bottom:1px solid #E4DCC8; }
 #tab-ledger tbody td.num{ text-align:right; font-variant-numeric:tabular-nums; font-weight:700; }
 #tab-ledger tbody td.num.income{ color:var(--lg-blue); }
@@ -1746,7 +1805,9 @@ function render(){
       <th style="width:80px; text-align:center;">ประเภท</th>
       <th class="num" style="width:110px; text-align:center;">จำนวนเงิน</th>
       <th class="del"></th>
-    </tr></thead>
+    </tr>
+    <tr class="lg-filter-row" id="lgFilterRow"></tr>
+    </thead>
     <tbody id="lgTbody"></tbody>
   </table>
 </div>
@@ -1789,8 +1850,9 @@ function render(){
   };
   let lgYears = [2026,2027,2028,2029,2030];
   let lgActiveYear = 0;
-  let lgActiveMonths = new Set([0]); // เดือนที่กำลังดูอยู่ — เริ่มต้นที่มกราคม เลือกได้หลายเดือน
-  let lgFormMonth = 0; // เดือนที่จะเพิ่มรายการใหม่ลงไป (แยกจากตัวกรองดูข้อมูล)
+  let lgActiveMonths = new Set([0]); // เดือนที่กำลังดูอยู่ — เริ่มต้นที่มกราคม เลือกได้หลายเดือน (จะถูกแทนที่ด้วยค่าที่เลือกไว้ล่าสุดตอนโหลดหน้า ถ้ามี)
+  let lgFormMonth = 0; // เดือนที่จะเพิ่มรายการใหม่ลงไป (แยกจากตัวกรองดูข้อมูล) — เช่นกัน จะถูกแทนที่ด้วยค่าล่าสุดถ้ามี
+  let lgFormDay = new Date().getDate(); // วันที่ในฟอร์มเพิ่มรายการ — ตั้งต้นเป็นวันที่ปัจจุบันของเครื่อง แล้วค้างค่าที่ผู้ใช้แก้ไว้ล่าสุดไปเรื่อยๆ
   let lgState = {}; // year -> [{id,day,category,note,type,amount}]
   let lgNewType = 'expense';
   let lgPendingCatSelect = null; // ชื่อหมวดหมู่ที่เพิ่งเพิ่มใหม่ ให้เลือกไว้ในดรอปดาวน์ตอน re-render ครั้งถัดไป
@@ -1800,6 +1862,11 @@ function render(){
   let lgClearYearIdx = 0;
   let lgClearMonthIdx = 0;
   let lgChartMonths = new Set([0]); // เริ่มต้นเลือกเดือนมกราคมไว้เสมอ
+  let lgFilterDay = 'all';      // ตัวกรองตารางรายการ: วันที่ ('all' หรือเลข 1-31)
+  let lgFilterType = 'all';     // ตัวกรองตารางรายการ: ประเภท ('all' | 'income' | 'savings' | 'expense')
+  let lgFilterCategory = 'all'; // ตัวกรองตารางรายการ: รายการ/หมวดหมู่ ('all' หรือชื่อหมวด)
+  let lgFilterNote = '';        // ตัวกรองตารางรายการ: ค้นหาข้อความในหมายเหตุ
+  let lgSortAmount = 'default'; // การเรียงลำดับตารางรายการ: 'default' (ตามวันที่) | 'asc' (น้อย→มาก) | 'desc' (มาก→น้อย)
 
 
   function lgKey(y){ return 'ledger:' + y; }
@@ -1818,6 +1885,40 @@ function render(){
   async function lgSave(y){
     if (!window.storage) return;
     try{ await window.storage.set(lgKey(y), JSON.stringify(lgState[y]), false); }catch(e){}
+  }
+
+  const LG_LAST_POS_KEY = 'ledger-last-position';
+
+  // จำปี/เดือน/วันที่ที่ผู้ใช้เลือก-กรอกไว้ล่าสุด เพื่อเปิดหน้ามาแล้วค้างไว้ตรงนั้นเลย ไม่ต้องย้อนกลับไปมกราคม/ปีแรกทุกครั้ง
+  async function lgSaveLastPosition(){
+    if (!window.storage) return;
+    const pos = {
+      year: lgYears[lgActiveYear],
+      formMonth: lgFormMonth,
+      activeMonths: Array.from(lgActiveMonths),
+      day: lgFormDay
+    };
+    try{ await window.storage.set(LG_LAST_POS_KEY, JSON.stringify(pos), false); }catch(e){}
+  }
+
+  async function lgLoadLastPosition(){
+    if (!window.storage) return;
+    try{
+      const res = await window.storage.get(LG_LAST_POS_KEY, false);
+      if (!res || !res.value) return;
+      const pos = JSON.parse(res.value);
+      if (!pos || typeof pos !== 'object') return;
+      if (pos.year != null){
+        const idx = lgYears.indexOf(pos.year);
+        if (idx > -1) lgActiveYear = idx;
+      }
+      if (pos.formMonth != null && pos.formMonth >= 0 && pos.formMonth <= 11) lgFormMonth = pos.formMonth;
+      if (Array.isArray(pos.activeMonths) && pos.activeMonths.length){
+        const cleaned = pos.activeMonths.filter(m => Number.isInteger(m) && m >= 0 && m <= 11);
+        if (cleaned.length) lgActiveMonths = new Set(cleaned);
+      }
+      if (pos.day != null && pos.day >= 1 && pos.day <= 31) lgFormDay = pos.day;
+    }catch(e){ /* ไม่มีค่าที่เคยบันทึกไว้ ใช้ค่าเริ่มต้นตามปกติ */ }
   }
 
   function lgFmt(v){
@@ -2101,6 +2202,11 @@ function render(){
 
     const dayInput = document.createElement('input');
     dayInput.type = 'number'; dayInput.className = 'day'; dayInput.min=1; dayInput.max=31; dayInput.placeholder='วันที่';
+    dayInput.value = lgFormDay; // ตั้งต้นด้วยวันที่ล่าสุดที่เคยกรอก (หรือวันที่ปัจจุบันของเครื่องถ้ายังไม่เคยแก้)
+    dayInput.addEventListener('input', ()=>{
+      const v = parseInt(dayInput.value,10);
+      if (v>=1 && v<=31){ lgFormDay = v; lgSaveLastPosition(); }
+    });
 
     const dateGroup = document.createElement('div'); dateGroup.className = 'lg-date-group';
     const dateYear = document.createElement('span'); dateYear.className = 'lg-date-year';
@@ -2243,14 +2349,119 @@ function render(){
     el.appendChild(row1); el.appendChild(row2); el.appendChild(row3);
   }
 
+  function lgFilterActive(){
+    return lgFilterDay !== 'all' || lgFilterType !== 'all' || lgFilterCategory !== 'all' || lgFilterNote.trim() !== '' || lgSortAmount !== 'default';
+  }
+
+  function lgApplyFilters(tx){
+    let out = tx;
+    if (lgFilterType !== 'all') out = out.filter(t => t.type === lgFilterType);
+    if (lgFilterCategory !== 'all') out = out.filter(t => (t.category || t.desc) === lgFilterCategory);
+    if (lgFilterDay !== 'all') out = out.filter(t => t.day === parseInt(lgFilterDay, 10));
+    if (lgFilterNote.trim() !== ''){
+      const q = lgFilterNote.trim().toLowerCase();
+      out = out.filter(t => (t.note || '').toLowerCase().includes(q));
+    }
+    return out;
+  }
+
+  function lgSortTx(tx){
+    if (lgSortAmount === 'asc') return tx.sort((a,b)=> (a.amount||0) - (b.amount||0));
+    if (lgSortAmount === 'desc') return tx.sort((a,b)=> (b.amount||0) - (a.amount||0));
+    return tx.sort((a,b)=> a.month-b.month || a.day-b.day || (LG_TYPE_ORDER[a.type]-LG_TYPE_ORDER[b.type]));
+  }
+
+  // categories ที่ควรอยู่ในตัวเลือก filter "รายการ" — ถ้าเลือกประเภทไว้แล้ว ให้โชว์แค่หมวดของประเภทนั้น
+  function lgFilterCategoryOptions(){
+    if (lgFilterType !== 'all') return (LG_CATEGORIES[lgFilterType] || []).slice();
+    const set = new Set();
+    ['income', 'savings', 'expense'].forEach(k => (LG_CATEGORIES[k] || []).forEach(c => set.add(c)));
+    return Array.from(set);
+  }
+
+  function lgRenderFilterRow(){
+    const el = document.getElementById('lgFilterRow');
+    if (!el) return;
+    el.innerHTML = '';
+
+    const thDay = document.createElement('th');
+    const selDay = document.createElement('select'); selDay.className = 'lg-filter-select';
+    selDay.innerHTML = '<option value="all">ทุกวัน</option>' + Array.from({length:31}, (_,i)=>i+1).map(d=>`<option value="${d}">${d}</option>`).join('');
+    selDay.value = String(lgFilterDay);
+    selDay.addEventListener('change', ()=>{ lgFilterDay = selDay.value; lgUpdateFilterClearBtn(); lgRenderTable(); });
+    thDay.appendChild(selDay);
+
+    const catOptions = lgFilterCategoryOptions();
+    if (lgFilterCategory !== 'all' && !catOptions.includes(lgFilterCategory)) lgFilterCategory = 'all';
+    const thCat = document.createElement('th');
+    const selCat = document.createElement('select'); selCat.className = 'lg-filter-select';
+    selCat.innerHTML = '<option value="all">ทุกรายการ</option>' + catOptions.map(c=>`<option value="${c}">${c}</option>`).join('');
+    selCat.value = lgFilterCategory;
+    selCat.addEventListener('change', ()=>{ lgFilterCategory = selCat.value; lgUpdateFilterClearBtn(); lgRenderTable(); });
+    thCat.appendChild(selCat);
+
+    const thNote = document.createElement('th');
+    const noteInp = document.createElement('input');
+    noteInp.type = 'text'; noteInp.className = 'lg-filter-select'; noteInp.placeholder = 'ค้นหาหมายเหตุ...';
+    noteInp.value = lgFilterNote;
+    // ใช้ 'input' เพื่อกรองแบบพิมพ์แล้วเห็นผลทันที — เรียก lgRenderTable() เฉยๆ (ไม่เรียก lgRenderFilterRow() ซ้ำ)
+    // เพื่อไม่ให้ช่องนี้ถูกสร้างใหม่ทุกตัวอักษรจนเคอร์เซอร์หลุดโฟกัสระหว่างพิมพ์
+    noteInp.addEventListener('input', ()=>{ lgFilterNote = noteInp.value; lgUpdateFilterClearBtn(); lgRenderTable(); });
+    thNote.appendChild(noteInp);
+
+    const thType = document.createElement('th');
+    const selType = document.createElement('select'); selType.className = 'lg-filter-select';
+    selType.innerHTML = `<option value="all">ทุกประเภท</option><option value="income">รายรับ</option><option value="savings">เงินออม</option><option value="expense">รายจ่าย</option>`;
+    selType.value = lgFilterType;
+    selType.addEventListener('change', ()=>{
+      lgFilterType = selType.value;
+      lgFilterCategory = 'all'; // เปลี่ยนประเภทแล้วต้องเคลียร์ตัวเลือกรายการเดิม เพราะอาจไม่อยู่ในประเภทใหม่แล้ว
+      lgRenderFilterRow();
+      lgRenderTable();
+    });
+    thType.appendChild(selType);
+
+    const thAmt = document.createElement('th');
+    const selSort = document.createElement('select'); selSort.className = 'lg-filter-select';
+    selSort.innerHTML = `<option value="default">ตามวันที่</option><option value="asc">น้อย → มาก</option><option value="desc">มาก → น้อย</option>`;
+    selSort.value = lgSortAmount;
+    selSort.addEventListener('change', ()=>{ lgSortAmount = selSort.value; lgUpdateFilterClearBtn(); lgRenderTable(); });
+    thAmt.appendChild(selSort);
+
+    const thDel = document.createElement('th');
+    thDel.id = 'lgFilterClearCell';
+
+    el.appendChild(thDay); el.appendChild(thCat); el.appendChild(thNote); el.appendChild(thType); el.appendChild(thAmt); el.appendChild(thDel);
+    lgUpdateFilterClearBtn();
+  }
+
+  // อัปเดตเฉพาะปุ่ม "ล้าง" ในแถบตัวกรอง โดยไม่แตะ DOM ของช่องอื่น (เช่นช่องค้นหาหมายเหตุที่กำลังพิมพ์อยู่ ไม่ให้เคอร์เซอร์หลุด)
+  function lgUpdateFilterClearBtn(){
+    const cell = document.getElementById('lgFilterClearCell');
+    if (!cell) return;
+    cell.innerHTML = '';
+    if (lgFilterActive()){
+      const clearBtn = document.createElement('button');
+      clearBtn.className = 'lg-filter-clear'; clearBtn.textContent = 'ล้าง';
+      clearBtn.title = 'ล้างตัวกรองและการเรียงลำดับทั้งหมด';
+      clearBtn.onclick = ()=>{
+        lgFilterDay='all'; lgFilterType='all'; lgFilterCategory='all'; lgFilterNote=''; lgSortAmount='default';
+        lgRenderFilterRow(); lgRenderTable();
+      };
+      cell.appendChild(clearBtn);
+    }
+  }
+
   function lgRenderTable(){
     const y = lgYears[lgActiveYear];
     const tbody = document.getElementById('lgTbody');
-    const tx = lgMonthsTx(y, lgActiveMonths).slice().sort((a,b)=> a.month-b.month || a.day-b.day || (LG_TYPE_ORDER[a.type]-LG_TYPE_ORDER[b.type]));
+    const tx = lgSortTx(lgApplyFilters(lgMonthsTx(y, lgActiveMonths).slice()));
     tbody.innerHTML = '';
     if (!tx.length){
       const tr = document.createElement('tr');
-      const msg = lgActiveMonths.size === 0 ? 'ยังไม่ได้เลือกเดือน — เลือกเดือนด้านบนก่อน' : `ยังไม่มีรายการใน${lgMonthsLabel()} — เพิ่มรายการด้านบนได้เลย`;
+      const msg = lgActiveMonths.size === 0
+        ? 'ยังไม่ได้เลือกเดือน — เลือกเดือนด้านบนก่อน'
+        : (lgFilterActive() ? 'ไม่มีรายการที่ตรงกับตัวกรองที่เลือก' : `ยังไม่มีรายการใน${lgMonthsLabel()} — เพิ่มรายการด้านบนได้เลย`);
       tr.innerHTML = `<td colspan="6" class="lg-empty">${msg}</td>`;
       tbody.appendChild(tr);
       return;
@@ -2477,9 +2688,11 @@ function render(){
 
   function lgBroadcastTotals(){
     if (!window.__ledgerCatTotals) window.__ledgerCatTotals = {};
+    if (!window.__ledgerCatCounts) window.__ledgerCatCounts = {};
     Object.keys(lgState).forEach(yStr=>{
       const y = parseInt(yStr,10);
       const cats = {};
+      const counts = {}; // จำนวนรายการย่อยของแต่ละหมวด/เดือน — ใช้ตัดสินว่าหน้าตารางจะแก้ไขแล้วซิงค์ย้อนกลับมาได้ไหม
       // pre-seed every known category with a zero-filled array, so that a
       // category whose last transaction just got deleted still gets sent
       // (as all-zero) instead of silently disappearing from the update —
@@ -2487,18 +2700,46 @@ function render(){
       ['income','expense','savings'].forEach(kind=>{
         (LG_CATEGORIES[kind]||[]).forEach(cat=>{
           cats[kind+'|'+cat] = Array(12).fill(0);
+          counts[kind+'|'+cat] = Array(12).fill(0);
         });
       });
       (lgState[y]||[]).forEach(t=>{
         const cat = t.category || t.desc || 'อื่นๆ';
         const key = t.type + '|' + cat;
-        if (!cats[key]) cats[key] = Array(12).fill(0);
+        if (!cats[key]) { cats[key] = Array(12).fill(0); counts[key] = Array(12).fill(0); }
         cats[key][t.month] += (t.amount||0);
+        counts[key][t.month] += 1;
       });
       window.__ledgerCatTotals[y] = cats;
+      window.__ledgerCatCounts[y] = counts;
     });
     window.dispatchEvent(new Event('ledger-updated'));
   }
+
+  // แก้ไข Actual ในหน้าตารางงบประมาณ (เฉพาะกรณีไม่มี/มีรายการเดียวในเดือนนั้น) ให้ย้อนกลับมาสร้าง/อัปเดตรายการในบัญชีรายรับ-รายจ่ายด้วย
+  async function applyActualEditFromBudget(){
+    const info = window.__budgetActualEdit;
+    if (!info) return;
+    const { year, kind, category, month, value } = info;
+    await lgLoad(year);
+    const list = lgState[year] || (lgState[year] = []);
+    const matches = list.filter(t => t.type === kind && (t.category || t.desc) === category && t.month === month);
+    if (matches.length >= 2) return; // กำกวม ไม่แตะต้อง (หน้าตารางจะล็อกเซลล์นี้อยู่แล้วไม่ให้แก้ถึงจุดนี้)
+    const amt = Math.abs(value || 0);
+    if (matches.length === 1){
+      if (amt <= 0){
+        lgState[year] = list.filter(t => t.id !== matches[0].id); // ล้างค่าในตาราง = ลบรายการนั้นทิ้ง
+      } else {
+        matches[0].amount = amt;
+      }
+    } else if (amt > 0){
+      list.push({ id: Date.now()+Math.random(), month, day: 1, category, note: 'เพิ่มจากตารางงบประมาณ', type: kind, amount: amt });
+    }
+    lgState[year].sort((a,b)=> a.month-b.month || a.day-b.day || (LG_TYPE_ORDER[a.type]-LG_TYPE_ORDER[b.type]));
+    await lgSave(year);
+    lgRenderAll();
+  }
+  window.addEventListener('budget-actual-edit', applyActualEditFromBudget);
 
   function lgRenderFooterClear(){
     const el = document.getElementById('lgFooterClear');
@@ -2590,9 +2831,11 @@ function render(){
     lgRenderForm();
     lgRenderChartMonthPicker();
     lgRenderCatChart();
+    lgRenderFilterRow();
     lgRenderTable();
     lgRenderFooterClear();
     lgBroadcastTotals();
+    lgSaveLastPosition(); // จำปี/เดือน/วันที่ล่าสุดไว้เสมอ ทุกครั้งที่มีการ render ใหม่จากการเปลี่ยนปี/เดือน/ข้อมูล
   }
 
   function applyBudgetCategories(){
@@ -2609,6 +2852,7 @@ function render(){
 
   (async ()=>{
     await lgLoadYearsList();
+    await lgLoadLastPosition(); // ดึงปี/เดือน/วันที่ที่เลือกไว้ล่าสุด ก่อนโหลดข้อมูลปีที่จะแสดงจริง
     await lgLoad(lgYears[lgActiveYear]);
     applyBudgetCategories();
     lgRenderAll();
