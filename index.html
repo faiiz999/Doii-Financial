@@ -1788,8 +1788,10 @@ function render(){
 #tab-ledger tbody td.num.expense{ color:var(--lg-red); }
 #tab-ledger tbody td.num.savings{ color:var(--lg-green-bright); }
 #tab-ledger tbody td.del{ text-align:center; width:34px; }
-#tab-ledger .lg-delbtn{ border:none; background:transparent; color:var(--lg-ink-soft); cursor:pointer; font-size:14px; }
+#tab-ledger .lg-delbtn{ border:none; background:transparent; color:var(--lg-ink-soft); cursor:pointer; font-size:14px; padding:4px 6px; border-radius:4px; }
 #tab-ledger .lg-delbtn:hover{ color:var(--lg-red); }
+#tab-ledger .lg-delbtn.confirm{ background:var(--lg-red); color:#fff; font-size:11.5px; font-weight:700; white-space:nowrap; padding:5px 8px; }
+#tab-ledger .lg-delbtn.confirm:hover{ background:#B23B2E; color:#fff; }
 #tab-ledger .lg-empty{ padding:18px; text-align:center; color:var(--lg-ink-soft); font-size:13px; }
 #tab-ledger .lg-badge{ display:inline-block; font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:999px; }
 #tab-ledger .lg-badge.income{ background:#DDE7FB; color:var(--lg-blue); }
@@ -1882,6 +1884,8 @@ function render(){
   let lgActiveMonths = new Set([0]); // เดือนที่กำลังดูอยู่ — เริ่มต้นที่มกราคม เลือกได้หลายเดือน (จะถูกแทนที่ด้วยค่าที่เลือกไว้ล่าสุดตอนโหลดหน้า ถ้ามี)
   let lgFormMonth = 0; // เดือนที่จะเพิ่มรายการใหม่ลงไป (แยกจากตัวกรองดูข้อมูล) — เช่นกัน จะถูกแทนที่ด้วยค่าล่าสุดถ้ามี
   let lgFormDay = new Date().getDate(); // วันที่ในฟอร์มเพิ่มรายการ — ตั้งต้นเป็นวันที่ปัจจุบันของเครื่อง แล้วค้างค่าที่ผู้ใช้แก้ไว้ล่าสุดไปเรื่อยๆ
+  let lgPendingDeleteId = null;   // id ของรายการที่กดปุ่มลบครั้งแรกแล้ว รอกดซ้ำเพื่อยืนยัน (กันกดพลาด แบบไม่ต้องเด้ง popup)
+  let lgPendingDeleteTimer = null; // ตัวจับเวลา ถ้าไม่กดยืนยันซ้ำภายในเวลาที่กำหนด จะยกเลิกโหมดยืนยันให้อัตโนมัติ
   let lgState = {}; // year -> [{id,day,category,note,type,amount}]
   let lgNewType = 'expense';
   let lgPendingCatSelect = null; // ชื่อหมวดหมู่ที่เพิ่งเพิ่มใหม่ ให้เลือกไว้ในดรอปดาวน์ตอน re-render ครั้งถัดไป
@@ -2583,16 +2587,26 @@ function render(){
       tdAmt.appendChild(document.createTextNode(sign));
       tdAmt.appendChild(amtInp);
 
-      // ลบ
+      // ลบ — กันกดพลาดด้วยปุ่มยืนยัน 2 จังหวะ (ไม่ใช้ popup): กดครั้งแรกปุ่มเปลี่ยนเป็น "ยืนยัน" สีแดง
+      // ถ้าไม่กดซ้ำภายในไม่กี่วินาทีจะยกเลิกโหมดยืนยันให้อัตโนมัติ กันปุ่มค้างไว้
       const tdDel = document.createElement('td'); tdDel.className = 'del';
       const delBtn = document.createElement('button');
-      delBtn.className = 'lg-delbtn'; delBtn.textContent = '✕'; delBtn.title = 'ลบรายการนี้';
+      const isPendingDelete = lgPendingDeleteId === t.id;
+      delBtn.className = 'lg-delbtn' + (isPendingDelete ? ' confirm' : '');
+      delBtn.textContent = isPendingDelete ? 'ยืนยัน' : '✕';
+      delBtn.title = isPendingDelete ? 'กดอีกครั้งเพื่อยืนยันการลบ' : 'ลบรายการนี้';
       delBtn.onclick = async ()=>{
-        // ถามย้ำก่อนลบเสมอ กันกดพลาด — บอกรายละเอียดรายการที่จะลบไปด้วยเพื่อความชัดเจน
-        const catLabel = t.category || t.desc || 'รายการนี้';
-        const amtLabel = (t.amount || 0).toLocaleString('en-US', {maximumFractionDigits:2});
-        const confirmMsg = `ยืนยันลบรายการ "${catLabel}" จำนวน ${amtLabel} บาท วันที่ ${t.day} ${LG_MONTHS[t.month]} ใช่หรือไม่?`;
-        if (!window.confirm(confirmMsg)) return;
+        if (lgPendingDeleteId !== t.id){
+          // กดครั้งแรก — ยังไม่ลบ แค่เปลี่ยนปุ่มเป็นโหมดยืนยัน
+          lgPendingDeleteId = t.id;
+          if (lgPendingDeleteTimer) clearTimeout(lgPendingDeleteTimer);
+          lgPendingDeleteTimer = setTimeout(()=>{ lgPendingDeleteId = null; lgRenderTable(); }, 3000);
+          lgRenderTable();
+          return;
+        }
+        // กดครั้งที่สอง (ยืนยันแล้ว) — ลบจริง
+        if (lgPendingDeleteTimer) clearTimeout(lgPendingDeleteTimer);
+        lgPendingDeleteId = null;
         const y2 = lgYears[lgActiveYear];
         lgState[y2] = lgState[y2].filter(x=>x.id!==t.id);
         await lgSave(y2);
